@@ -1,3 +1,8 @@
+#https://www.kaggle.com/kabure/eda-feat-engineering-encode-conquer
+
+
+
+
 def resumetable(df):
     print(f"Dataset Shape: {df.shape}")
     summary = pd.DataFrame(df.dtypes,columns=['dtypes'])
@@ -14,7 +19,6 @@ def resumetable(df):
         summary.loc[summary['Name'] == name, 'Entropy'] = round(stats.entropy(df[name].value_counts(normalize=True), base=2),2) 
 
     return summary
-    
     
     
     ## Function to reduce the DF size
@@ -77,6 +81,11 @@ def vis_bin(df,cols):
     plt.show()
 
 
+    
+    
+    
+    
+    
 #visualization for category cols and binary target
 def ploting_cat_fet(df, cols, vis_row=5, vis_col=2,target='target'):
     
@@ -128,3 +137,29 @@ ord_1 = CategoricalDtype(categories=['Novice', 'Contributor','Expert',
                                      'Master', 'Grandmaster'], ordered=True)
 ord_2 = CategoricalDtype(categories=['Freezing', 'Cold', 'Warm', 'Hot',
                                      'Boiling Hot', 'Lava Hot'], ordered=True)
+
+# Transforming ordinal Features
+df_train.ord_1 = df_train.ord_1.astype(ord_1)
+df_train.ord_2 = df_train.ord_2.astype(ord_2)
+# test dataset
+df_test.ord_1 = df_test.ord_1.astype(ord_1)
+df_test.ord_2 = df_test.ord_2.astype(ord_2)
+
+
+# Geting the codes of ordinal categoy's - train
+df_train.ord_1 = df_train.ord_1.cat.codes
+df_train.ord_2 = df_train.ord_2.cat.codes
+
+# Geting the codes of ordinal categoy's - test
+df_test.ord_1 = df_test.ord_1.cat.codes
+df_test.ord_2 = df_test.ord_2.cat.codes
+
+
+
+# Transfer the cyclical features into two dimensional sin-cos features
+# https://www.kaggle.com/avanwyk/encoding-cyclical-features-for-deep-learning
+
+def date_cyc_enc(df, col, max_vals):
+    df[col + '_sin'] = np.sin(2 * np.pi * df[col]/max_vals)
+    df[col + '_cos'] = np.cos(2 * np.pi * df[col]/max_vals)
+    return df
