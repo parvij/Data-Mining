@@ -3,6 +3,26 @@
 
 
 
+# time cost
+%%time
+
+
+
+
+
+traintest = pd.concat([train, test])
+dummies = pd.get_dummies(traintest, columns=traintest.columns, drop_first=True, sparse=True)
+train_ohe = dummies.iloc[:train.shape[0], :]
+test_ohe = dummies.iloc[train.shape[0]:, :]
+# It looks like `sparse = True` in `get_dummies` no longer makes anything sparse, and we have to explicitly convert
+# If you don't do this, the model takes forever... it is much much faster on sparse data!
+train_ohe = train_ohe.sparse.to_coo().tocsr()
+test_ohe = test_ohe.sparse.to_coo().tocsr()
+
+
+
+
+
 def resumetable(df):
     print(f"Dataset Shape: {df.shape}")
     summary = pd.DataFrame(df.dtypes,columns=['dtypes'])
@@ -163,3 +183,174 @@ def date_cyc_enc(df, col, max_vals):
     df[col + '_sin'] = np.sin(2 * np.pi * df[col]/max_vals)
     df[col + '_cos'] = np.cos(2 * np.pi * df[col]/max_vals)
     return df
+
+
+
+
+
+
+
+
+
+
+from sklearn.model_selection import KFold
+from sklearn.metrics import roc_auc_score as auc
+from sklearn.linear_model import LogisticRegression
+
+# Model
+def run_cv_model(train, test, target, model_fn, params={}, eval_fn=None, label='model'):
+    kf = KFold(n_splits=5)
+    fold_splits = kf.split(train, target)
+    cv_scores = []
+    pred_full_test = 0
+    pred_train = np.zeros((train.shape[0]))
+    i = 1
+    for dev_index, val_index in fold_splits:
+        print('Started ' + label + ' fold ' + str(i) + '/5')
+        dev_X, val_X = train[dev_index], train[val_index]
+        dev_y, val_y = target[dev_index], target[val_index]
+        params2 = params.copy()
+        pred_val_y, pred_test_y = model_fn(dev_X, dev_y, val_X, val_y, test, params2)
+        pred_full_test = pred_full_test + pred_test_y
+        pred_train[val_index] = pred_val_y
+        if eval_fn is not None:
+            cv_score = eval_fn(val_y, pred_val_y)
+            cv_scores.append(cv_score)
+            print(label + ' cv score {}: {}'.format(i, cv_score))
+        i += 1
+    print('{} cv scores : {}'.format(label, cv_scores))
+    print('{} cv mean score : {}'.format(label, np.mean(cv_scores)))
+    print('{} cv std score : {}'.format(label, np.std(cv_scores)))
+    pred_full_test = pred_full_test / 5.0
+    results = {'label': label,
+              'train': pred_train, 'test': pred_full_test,
+              'cv': cv_scores}
+    return results
+
+
+def runLR(train_X, train_y, test_X, test_y, test_X2, params):
+    print('Train LR')
+    model = LogisticRegression(**params)
+    model.fit(train_X, train_y)
+    print('Predict 1/2')
+    pred_test_y = model.predict_proba(test_X)[:, 1]
+    print('Predict 2/2')
+    pred_test_y2 = model.predict_proba(test_X2)[:, 1]
+    return pred_test_y, pred_test_y2
+
+
+lr_params = {'solver': 'lbfgs', 'C': 0.1}
+results = run_cv_model(train_ohe, test_ohe, target, runLR, lr_params, auc, 'lr')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Map cat vals which are not in both sets to single values
+
+for col in cols:
+    train_vals = set(df_train[col].unique())
+    test_vals = set(df_test[col].unique())
+   
+    xor_cat_vals=train_vals ^ test_vals
+    if xor_cat_vals:
+        df.loc[df[col].isin(xor_cat_vals), col]="xor"
+
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+from sklearn.model_selection import KFold
+from sklearn.metrics import roc_auc_score as auc
+from catboost import Pool, CatBoostClassifier
+from category_encoders import TargetEncoder
+
+
+# Model
+def run_cv_model(categorical_indices, train, test, target, model_fn, params={}, eval_fn=None, label='model', n_folds=5):
+    kf = KFold(n_splits=n_folds)
+    fold_splits = kf.split(train, target)
+    cv_scores = []
+    pred_full_test = 0
+    pred_train = np.zeros((train.shape[0]))
+    feature_importances = pd.DataFrame()
+    feature_importances['feature'] = test.columns
+    i = 1
+    for dev_index, val_index in fold_splits:
+        print('-------------------------------------------')
+        print('Started ' + label + ' fold ' + str(i) + f'/{n_folds}')
+        dev_X, val_X = train.iloc[dev_index], train.iloc[val_index]
+        dev_y, val_y = target.iloc[dev_index], target.iloc[val_index]
+        params2 = params.copy()
+        pred_val_y, pred_test_y, fi = model_fn(categorical_indices, dev_X, dev_y, val_X, val_y, test, params2)
+        feature_importances[f'fold_{i}'] = fi
+        pred_full_test = pred_full_test + pred_test_y
+        pred_train[val_index] = pred_val_y
+        if eval_fn is not None:
+            cv_score = eval_fn(val_y, pred_val_y)
+            cv_scores.append(cv_score)
+            print(label + ' cv score {}: {}'.format(i, cv_score), '\n')
+        i += 1
+    print('{} cv scores : {}'.format(label, cv_scores))
+    print('{} cv mean score : {}'.format(label, np.mean(cv_scores)))
+    print('{} cv std score : {}'.format(label, np.std(cv_scores)))
+    pred_full_test = pred_full_test / n_folds
+    results = {'label': label,
+              'train': pred_train, 'test': pred_full_test,
+              'cv': cv_scores, 'fi': feature_importances}
+    return results
+
+
+def runCAT(categorical_indices, train_X, train_y, test_X, test_y, test_X2, params):
+    # Pool the data and specify the categorical feature indices
+    print('Pool Data')
+    _train = Pool(train_X, label=train_y, cat_features = categorical_indices)
+    _valid = Pool(test_X, label=test_y, cat_features = categorical_indices)    
+    print('Train CAT')
+    model = CatBoostClassifier(**params)
+    fit_model = model.fit(_train,
+                          eval_set=_valid,
+                          use_best_model=True,
+                          verbose=1000,
+                          plot=False)
+    feature_im = fit_model.feature_importances_
+    print('Predict 1/2')
+    pred_test_y = fit_model.predict_proba(test_X)[:, 1]
+    print('Predict 2/2')
+    pred_test_y2 = fit_model.predict_proba(test_X2)[:, 1]
+    return pred_test_y, pred_test_y2, feature_im
+
+
+# Use some baseline parameters
+cat_params = {'loss_function': 'CrossEntropy', 
+              'eval_metric': "AUC",
+              'task_type': "GPU",
+              'learning_rate': 0.01,
+              'iterations': 10000,
+              'random_seed': 42,
+              'od_type': "Iter",
+#               'bagging_temperature': 0.2,
+#               'depth': 10,
+              'early_stopping_rounds': 500,
+             }
+
+n_folds = 5
+results = run_cv_model(categorical_features_indices, train, test, target, runCAT, cat_params, auc, 'cat', n_folds=n_folds)
+
+        
