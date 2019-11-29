@@ -354,3 +354,25 @@ n_folds = 5
 results = run_cv_model(categorical_features_indices, train, test, target, runCAT, cat_params, auc, 'cat', n_folds=n_folds)
 
         
+
+    
+    
+    
+def make_radar_chart(title, stats, attribute_labels, plot_markers):#, plot_str_markers = str_markers):
+
+    labels = np.array(attribute_labels)
+
+    angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False)
+    stats = np.concatenate((stats,[stats[0]]))
+    angles = np.concatenate((angles,[angles[0]]))
+
+    fig= plt.figure()
+    ax = fig.add_subplot(111, polar=True)
+    ax.plot(angles, stats, 'o-', linewidth=2,color='coral')
+    ax.fill(angles, stats, alpha=0.25)
+    ax.set_thetagrids(angles * 180/np.pi, labels)
+    plt.yticks(plot_markers)
+    ax.set_title(title)
+    ax.grid(True)
+
+    return plt.show()
